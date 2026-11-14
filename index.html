@@ -165,6 +165,7 @@ function amt(q,u){return fq(q)+un(u,q)}
 
 var embedded=JSON.parse($('state').textContent),state=embedded;
 try{var l=JSON.parse(localStorage.getItem(KEY)||'null');if(l&&l.editedAt>(embedded.editedAt||0))state=l}catch(e){}
+var server=false,syncState='',pt=null;
 var art=null,artDone=false,ai=null,saving=false,saveErr='',sheetKey=null,confirmNext=false,copied=false,aiBusy=false,aiErr='',draft={name:'',type:'D',ing:[]},msg='';
 
 function isoMonday(){var d=new Date();d.setHours(12,0,0,0);var w=(d.getDay()+6)%7;d.setDate(d.getDate()-w+(w>=4?7:0));return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()}
@@ -183,7 +184,10 @@ function cost(plan,pantry){return rows(plan,pantry||state.pantry).reduce(functio
 function servings(){var c=0;for(var d=0;d<7;d++)for(var j=0;j<2;j++)if(slotRecipe(state.plan,d,'LD'[j]))c++;return c*state.people}
 function weekTotal(){var t=state.spent||0;rows(state.plan,state.pantry).forEach(function(r){if(!state.skip[r.k])t+=r.cost});state.extras.forEach(function(e){t+=e.price});return t}
 
-function store(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+function syncText(){return syncState==='saving'?'Saving…':syncState==='error'?'Not synced. Check your connection.':'Synced to your account'}
+function setNote(){var n=$('syncnote');if(n)n.textContent=syncText()}
+function push(){if(!server)return;syncState='saving';setNote();clearTimeout(pt);pt=setTimeout(function(){fetch('api/state',{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)}).then(function(r){if(r.status===401){location.href='login';return}syncState=r.ok?'saved':'error';setNote()}).catch(function(){syncState='error';setNote()})},600)}
+function store(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}push()}
 function change(fn,keepStage){fn();if(!keepStage&&state.stage!=='draft')state.stage='draft';state.editedAt=Date.now();confirmNext=false;copied=false;msg='';store();render()}
 function dirty(){return state.editedAt>(embedded.editedAt||0)}
 function doc(){var data=JSON.stringify(state).replace(/</g,'\\u003c');
@@ -196,7 +200,7 @@ function tab(){var h=location.hash.replace('#','');return ['week','pantry','shop
 function header(){
   var t=weekTotal(),b=state.budget||0,over=b>0&&t>b+0.005,pct=b>0?Math.min(100,t/b*100):0,sv=servings(),saved=cost(state.plan,{})-cost(state.plan,state.pantry);
   var a=wkDate(0),z=wkDate(6),wk=MON[a.getMonth()]+' '+a.getDate()+' – '+(z.getMonth()!==a.getMonth()?MON[z.getMonth()]+' ':'')+z.getDate();
-  var sb=art?('<button class="savebtn'+(dirty()?' dirty':'')+'" data-a="save"'+(dirty()&&!saving?'':' disabled')+'>'+(saving?'Saving…':dirty()?'Save changes':'Saved')+'</button>'):(artDone?'<span class="savenote">Kept on this device</span>':'');
+  var sb=art?('<button class="savebtn'+(dirty()?' dirty':'')+'" data-a="save"'+(dirty()&&!saving?'':' disabled')+'>'+(saving?'Saving…':dirty()?'Save changes':'Saved')+'</button>'):(artDone||server?'<span class="savenote" id="syncnote">'+(server?syncText():'Kept on this device')+'</span>':'');
   var nb=rows(state.plan,state.pantry).filter(function(r){return r.packs>0&&!state.skip[r.k]}).length+state.extras.length;
   var tabs=[['week','Week'],['pantry','Pantry'],['shopping','Shopping'],['recipes','Recipes']],cur=tab();
   return '<header class="top"><div class="brand"><div><h1>Meal Week</h1><div class="wk">'+wk+' · lunch and dinner</div></div>'+sb+'</div>'+
@@ -364,6 +368,8 @@ window.addEventListener('hashchange',function(){msg='';confirmNext=false;render(
 function hook(){if(!(window.claude&&window.claude.use))return false;
   window.claude.use('artifact').then(function(a){art=a;artDone=true;render()},function(){artDone=true;render()});
   window.claude.use('sample').then(function(s){ai=s;if(s)render()},function(){});return true}
+function loadServer(){try{fetch('api/state',{credentials:'same-origin',headers:{'Accept':'application/json'}}).then(function(r){if(r.status===401){location.href='login';return null}var ct=r.headers.get('content-type')||'';if(!r.ok||ct.indexOf('json')<0)return null;return r.json()}).then(function(s){if(s===null||typeof s!=='object')return;server=true;if(s.weekStart&&(s.editedAt||0)>=(state.editedAt||0)){state=s;state.items=state.items||{};state.recipes=state.recipes||[];state.extras=state.extras||[];state.skip=state.skip||{};state.prices=state.prices||{};state.pantry=state.pantry||{};state.plan=state.plan||{}}else if((state.editedAt||0)>(s.editedAt||0)){push()}render()}).catch(function(){})}catch(e){}}
 render();
+loadServer();
 if(!hook())window.addEventListener('load',function(){if(!hook()){artDone=true;render()}});
 </script></body></html>
